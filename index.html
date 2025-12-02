@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Galaxy Mission – Sector Simon Game</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: radial-gradient(#000428, #000000);
+  overflow: hidden;
+  color: #b8e7ff;
+  text-align: center;
+}
+
+/* SIMON BOARD --------------------------------------------------*/
+#simon-board {
+  position: absolute;
+  top: 140px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 330px;
+  display: grid;
+  grid-template-columns: repeat(2, 150px);
+  grid-template-rows: repeat(2, 150px);
+  gap: 15px;
+  z-index: 5;
+}
+
+.pad {
+  width: 150px;
+  height: 150px;
+  border-radius: 15px;
+  opacity: 0.8;
+  transition: all 0.25s ease;
+  box-shadow: 0 0 20px #001;
+}
+
+.pad.flash {
+  filter: brightness(2) saturate(1.5);
+  box-shadow: 0 0 35px #fff, 0 0 25px cyan;
+  opacity: 1;
+}
+
+.pad.glow {
+  animation: pulseGlow 1s infinite alternate;
+}
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 20px #fff, 0 0 20px cyan; }
+  100% { box-shadow: 0 0 50px #fff, 0 0 50px cyan; }
+}
+
+.green { background: #00ffcc; }
+.red { background: #ff3366; }
+.yellow { background: #ffee55; }
+.blue { background: #3399ff; }
+
+/* UI ------------------------------------------------------------*/
+#start-btn {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0ff;
+  padding: 14px 28px;
+  border: none;
+  border-radius: 8px;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 0 12px cyan;
+  z-index: 6;
+}
+
+#message {
+  margin-top: 520px;
+  font-size: 20px;
+  text-shadow: 0 0 6px #33c1ff;
+}
+
+/* MAP AREA -------------------------------------------------------*/
+#mapCanvas {
+  position: absolute;
+  width: 100%;
+  height: 220px;
+  top: 575px;
+  left: 0;
+  z-index: 4;
+  background: rgba(0,0,0,0.8);
+  border-top: 2px solid #0ff;
+}
+
+/* Health ---------------------------------------------------------*/
+#health {
+  position: absolute;
+  top: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 26px;
+  color: #ff6f6f;
+  text-shadow: 0 0 8px red;
+  z-index: 5;
+}
+
+/* Celebration GIF ------------------------------------------------*/
+#celebration-left, #celebration-right {
+  position: absolute;
+  top: 100px;
+  width: 150px;
+  height: 150px;
+  z-index: 10;
+  display: none;
+}
+#celebration-left { left: 20px; }
+#celebration-right { right: 20px; }
+
+/* Boss intro text */
+#boss-intro {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%) scale(1);
+  font-size: 36px;
+  color: red;
+  text-shadow: 0 0 12px yellow;
+  display: none;
+  z-index: 11;
+}
+</style>
+</head>
+<body>
+
+<button id="start-btn">Begin Mission</button>
+<div id="health">Shields: ❤️❤️❤️</div>
+
+<div id="simon-board">
+  <div class="pad green" data-color="green"></div>
+  <div class="pad red" data-color="red"></div>
+  <div class="pad yellow" data-color="yellow"></div>
+  <div class="pad blue" data-color="blue"></div>
+</div>
+
+<div id="message"></div>
+<div id="boss-intro">BOSS APPROACHING!</div>
+
+<img src="advance.gif" id="celebration-left">
+<img src="advance.gif" id="celebration-right">
+
+<canvas id="mapCanvas"></canvas>
+
+<script>
+/* ============================================================
+   GLOBALS
+===============================================================*/
+let sequence = [];
+let playerSeq = [];
+let level = 0;
+let accepting = false;
+let sector = 1;
+let shields = 3;
+let bossActive = false;
+let sector5Rounds = 0;
+let gameOver = false;
+
+const pads = document.querySelectorAll('.pad');
+const message = document.getElementById('message');
+const healthDisplay = document.getElementById('health');
+const startBtn = document.getElementById('start-btn');
+const bossIntro = document.getElementById('boss-intro');
+
+const mapCanvas = document.getElementById("mapCanvas");
+const mapCtx = mapCanvas.getContext("2d");
+mapCanvas.width = window.innerWidth;
+mapCanvas.height = 220;
+
+/* ============================================================
+   LOAD SHIP AND PLANETS
+===============================================================*/
+const shipImg = new Image();
+shipImg.src = "ship.png";
+
+const planets = [];
+for (let i = 0; i < 20; i++) {
+  planets.push({
+    x: Math.random() * mapCanvas.width,
+    y: Math.random() * mapCanvas.height,
+    size: 20 + Math.random() * 30,
+    color: `hsl(${Math.random()*360},70%,60%)`
+  });
+}
+
+/* Stars */
+const stars = [];
+for(let i=0;i<80;i++){
+  stars.push({
+    x: Math.random()*mapCanvas.width,
+    y: Math.random()*mapCanvas.height,
+    size: Math.random()*2+1,
+    speed: Math.random()*0.2+0.05
+  });
+}
+
+/* Nebula fog layers */
+const nebulaLayers = [];
+for(let i=0;i<3;i++){
+  nebulaLayers.push({
+    x: Math.random()*mapCanvas.width,
+    y: Math.random()*mapCanvas.height/2,
+    radius: 150+Math.random()*200,
+    color: `hsla(${Math.random()*360},60%,50%,0.15)`
+  });
+}
+
+/* Draw map background */
+let shipPos = 20;
+let traveling = false;
+
+function drawMap() {
+  mapCtx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+
+  // Nebula fog
+  nebulaLayers.forEach(l=>{
+    mapCtx.beginPath();
+    let grad = mapCtx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.radius);
+    grad.addColorStop(0,l.color);
+    grad.addColorStop(1,"transparent");
+    mapCtx.fillStyle = grad;
+    mapCtx.arc(l.x,l.y,l.radius,0,Math.PI*2);
+    mapCtx.fill();
+    l.x += 0.05;
+    if(l.x>mapCanvas.width+l.radius) l.x=-l.radius;
+  });
+
+  // Stars
+  stars.forEach(s=>{
+    mapCtx.fillStyle = "white";
+    mapCtx.globalAlpha = 0.8;
+    mapCtx.fillRect(s.x,s.y,s.size,s.size);
+    s.x -= s.speed;
+    if(s.x<0) s.x=mapCanvas.width;
+  });
+  mapCtx.globalAlpha=1;
+
+  // Planets
+  planets.forEach(p => {
+    mapCtx.beginPath();
+    mapCtx.fillStyle = p.color;
+    mapCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    mapCtx.fill();
+  });
+
+  // Ship
+  mapCtx.drawImage(shipImg, shipPos, mapCanvas.height/2 - 30, 60, 80);
+}
+
+/* Animate map continuously */
+function animateMap() {
+  drawMap();
+  requestAnimationFrame(animateMap);
+}
+animateMap();
+
+/* ============================================================
+   SIMON GAME LOGIC
+===============================================================*/
+function playSound(color) {
+  const s = {
+    green: "https://s3.amazonaws.com/freecodecamp/simonSound1.mp3",
+    red: "https://s3.amazonaws.com/freecodecamp/simonSound2.mp3",
+    yellow: "https://s3.amazonaws.com/freecodecamp/simonSound3.mp3",
+    blue: "https://s3.amazonaws.com/freecodecamp/simonSound4.mp3",
+  };
+  new Audio(s[color]).play();
+}
+
+function flashPad(pad) {
+  pad.classList.add("flash");
+  playSound(pad.dataset.color);
+  setTimeout(() => pad.classList.remove("flash"), 300);
+}
+
+function playSequence(callback) {
+  accepting = false;
+  let i = 0;
+  const interval = setInterval(() => {
+    flashPad(document.querySelector(`.pad.${sequence[i]}`));
+    i++;
+    if(i>=sequence.length){
+      clearInterval(interval);
+      accepting=true;
+      if(callback) callback();
+    }
+  }, 750);
+}
+
+function nextRound() {
+  if(gameOver) return;
+
+  level++;
+
+  // Boss trigger: Sector 5 intro animation
+  if(sector===5 && level===1 && !bossActive){
+    bossActive = true;
+    showBossIntro(()=>{
+      sequence = [];
+      for(let i=0;i<8;i++){
+        const colors=["green","red","yellow","blue"];
+        sequence.push(colors[Math.floor(Math.random()*4)]);
+      }
+      playSequence();
+    });
+    return;
+  }
+
+  if(level % 3 === 1 && level > 1){
+    sector++;
+    playTravelCutscene(()=>{
+      startSimonRound();
+    });
+  }else{
+    startSimonRound();
+  }
+}
+
+function startSimonRound(){
+  if(gameOver) return;
+  message.textContent=`Sequence Length: ${level}`;
+  playerSeq=[];
+  if(sector!==5){ // normal rounds
+    const colors=["green","red","yellow","blue"];
+    if(sequence.length<level){
+      sequence.push(colors[Math.floor(Math.random()*4)]);
+    }
+  }
+  playSequence();
+}
+
+/* ============================================================
+   BOSS INTRO ANIMATION + BOARD GLOW
+===============================================================*/
+function showBossIntro(callback){
+  bossIntro.style.display="block";
+  pads.forEach(p=>p.classList.add("glow"));
+  const utter = new SpeechSynthesisUtterance(`Warning! Boss approaching! Prepare your sequence!`);
+  utter.onend = ()=>{
+    let scale = 1;
+    const anim = setInterval(()=>{
+      scale += 0.05;
+      bossIntro.style.transform = `translate(-50%, -50%) scale(${scale})`;
+      if(scale>1.5){
+        clearInterval(anim);
+        bossIntro.style.display="none";
+        pads.forEach(p=>p.classList.remove("glow"));
+        callback();
+      }
+    },50);
+  };
+  speechSynthesis.speak(utter);
+}
+
+/* ============================================================
+   SHIP MAP MOVEMENT CUTSCENE
+===============================================================*/
+function playTravelCutscene(callback){
+  traveling=true;
+  const travelAudio = new Audio("spacemove.mp3");
+
+  const utter = new SpeechSynthesisUtterance(`Entering Sector ${sector}. Prepare for navigation.`);
+
+  utter.onend = () => {
+    travelAudio.play();
+    let target = shipPos + mapCanvas.width / 4;
+
+    function animate() {
+      if (shipPos < target) {
+        shipPos += 4;
+        requestAnimationFrame(animate);
+      } else {
+        traveling = false;
+        travelAudio.pause();
+        callback();
+      }
+    }
+    animate();
+  };
+
+  speechSynthesis.speak(utter);
+}
+
+/* ============================================================
+   PLAYER INPUT
+===============================================================*/
+pads.forEach(p=>{
+  p.addEventListener("click", e=>{
+    if(!accepting || traveling || gameOver) return;
+    const color = e.target.dataset.color;
+    playerSeq.push(color);
+    flashPad(e.target);
+    const idx = playerSeq.length-1;
+    if(playerSeq[idx]!==sequence[idx]){
+      shields--;
+      healthDisplay.textContent=`Shields: ${"❤️".repeat(shields)}`;
+      if(shields<=0){
+        message.textContent="MISSION FAILED — Shields Depleted!";
+        resetGame();
+        return;
+      }else{
+        message.textContent="Incorrect — Shield Lost!";
+        playerSeq=[];
+        setTimeout(()=>playSequence(),1200);
+        return;
+      }
+    }
+    if(playerSeq.length===sequence.length){
+      if(sector===5){
+        sector5Rounds++;
+        if(sector5Rounds>=3){
+          endGame();
+          return;
+        } else {
+          setTimeout(nextRound,800);
+          return;
+        }
+      }
+      setTimeout(nextRound,800);
+    }
+  });
+});
+
+/* ============================================================
+   CELEBRATION + FIREWORKS
+===============================================================*/
+const celebrateLeft = document.getElementById("celebration-left");
+const celebrateRight = document.getElementById("celebration-right");
+
+const fireworks = [];
+function createFirework() {
+  const x = Math.random()*mapCanvas.width;
+  const y = Math.random()*mapCanvas.height/2;
+  const colors = ["red","cyan","yellow","lime","magenta","orange"];
+  for(let i=0;i<20;i++){
+    fireworks.push({
+      x,y,
+      dx: (Math.random()-0.5)*4,
+      dy: (Math.random()-0.5)*4,
+      color: colors[Math.floor(Math.random()*colors.length)],
+      life: 50+Math.random()*30
+    });
+  }
+}
+
+function drawFireworks(){
+  if(!gameOver) return;
+  mapCtx.save();
+  fireworks.forEach((f,i)=>{
+    mapCtx.fillStyle = f.color;
+    mapCtx.globalAlpha = f.life/80;
+    mapCtx.fillRect(f.x,f.y,2,2);
+    f.x += f.dx;
+    f.y += f.dy;
+    f.life--;
+    if(f.life<=0) fireworks.splice(i,1);
+  });
+  mapCtx.restore();
+  if(Math.random()<0.05) createFirework();
+  requestAnimationFrame(drawFireworks);
+}
+
+function endGame(){
+  gameOver=true;
+  celebrateLeft.style.display="block";
+  celebrateRight.style.display="block";
+  const audio = new Audio("hamster.mp3");
+  audio.play();
+  message.textContent="MISSION COMPLETE!";
+  drawFireworks();
+}
+
+/* ============================================================
+   GAME RESET / START
+===============================================================*/
+function resetGame(){
+  sequence=[];
+  playerSeq=[];
+  level=0;
+  sector=1;
+  shields=3;
+  bossActive=false;
+  sector5Rounds=0;
+  gameOver=false;
+  shipPos=20;
+  message.textContent="";
+  healthDisplay.textContent="Shields: ❤️❤️❤️";
+  celebrateLeft.style.display="none";
+  celebrateRight.style.display="none";
+  bossIntro.style.display="none";
+  fireworks.length=0;
+}
+
+startBtn.addEventListener("click",()=>{
+  resetGame();
+  nextRound();
+});
+</script>
+
+</body>
+</html>
